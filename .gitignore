@@ -1,0 +1,22 @@
+# Build outputs
+bin/
+obj/
+*.pdb
+*.cache
+
+# Local IDE/user state
+.vs/
+*.user
+*.suo
+
+# oh-my-codex/session state
+.omx/
+
+# Local release artifacts. Attach these to GitHub Releases instead of committing them.
+release/
+*.zip
+
+# OS/editor noise
+Thumbs.db
+Desktop.ini
+.DS_Store
