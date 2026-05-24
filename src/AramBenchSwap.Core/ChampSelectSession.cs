@@ -17,5 +17,10 @@ namespace AramBenchSwap.Core
         public bool BenchEnabled { get; private set; }
         public long LocalPlayerCellId { get; private set; }
         public IList<BenchChampion> BenchChampions { get; private set; }
+
+        public ChampSelectSession WithBenchChampions(IEnumerable<BenchChampion> benchChampions)
+        {
+            return new ChampSelectSession(IsAvailable, BenchEnabled, LocalPlayerCellId, benchChampions);
+        }
     }
 }

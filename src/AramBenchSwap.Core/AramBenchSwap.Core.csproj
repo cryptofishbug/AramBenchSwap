@@ -22,8 +22,11 @@
   <ItemGroup>
     <Compile Include="BenchChampion.cs" />
     <Compile Include="BenchWindowState.cs" />
+    <Compile Include="ChampionAvailabilityParser.cs" />
     <Compile Include="ChampSelectSession.cs" />
     <Compile Include="ChampSelectSessionParser.cs" />
+    <Compile Include="DisplayMode.cs" />
+    <Compile Include="DisplayModePreference.cs" />
     <Compile Include="LcuClient.cs" />
     <Compile Include="LcuConnection.cs" />
     <Compile Include="HttpLcuTransport.cs" />

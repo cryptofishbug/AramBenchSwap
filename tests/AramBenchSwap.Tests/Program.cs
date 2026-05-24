@@ -12,8 +12,12 @@ namespace AramBenchSwap.Tests
             {
                 ParsesLockfile();
                 ParsesBenchChampionsFromSession();
+                ParsesSelectableChampionIds();
                 BuildsBenchSwapRequestWithoutBody();
                 RejectsBenchSwapWhenChampionIsNotOnBench();
+                RefreshesBenchBeforeSendingSwapRequest();
+                KeepsUnselectableBenchChampionVisible();
+                RejectsBenchSwapWhenChampionIsNotSelectable();
                 ReadsConnectionFromFirstExistingLockfile();
                 ReadsLockfileWhileWriterKeepsItOpen();
                 BuildsLcuBasicAuthHeader();
@@ -23,9 +27,13 @@ namespace AramBenchSwap.Tests
                 DoublesDefaultPanelWidthForBenchIcons();
                 ClampsPanelAboveClientToWorkAreaTop();
                 AllowsCertificateBypassOnlyForLocalLcuUrls();
-                HidesOverlayOutsideChampSelectButKeepsStatusText();
+                OverlayModeShowsStatusBeforeChampSelect();
+                BenchOnlyModeHidesStatusBeforeChampSelect();
+                OverlayModeShowsChampSelectWaitingStatus();
+                BenchOnlyModeHidesChampSelectWaitingStatus();
                 HidesOverlayDuringInProgressButKeepsStatusText();
                 ShowsOverlayOnlyForChampSelectBench();
+                ParsesDisplayModePreference();
                 Console.WriteLine("All tests passed.");
                 return 0;
             }
@@ -74,6 +82,49 @@ namespace AramBenchSwap.Tests
             AssertTrue(session.BenchChampions[1].IsPriority, "second priority");
         }
 
+        private static void ParsesSelectableChampionIds()
+        {
+            const string json = @"[
+              {
+                ""id"": 22,
+                ""active"": true,
+                ""disabled"": false,
+                ""freeToPlay"": false,
+                ""ownership"": { ""owned"": true, ""freeToPlayReward"": false }
+              },
+              {
+                ""id"": 103,
+                ""active"": true,
+                ""disabled"": false,
+                ""freeToPlay"": true,
+                ""ownership"": { ""owned"": false, ""freeToPlayReward"": false }
+              },
+              {
+                ""id"": 81,
+                ""active"": true,
+                ""disabled"": false,
+                ""freeToPlay"": false,
+                ""ownership"": { ""owned"": false, ""freeToPlayReward"": false }
+              },
+              {
+                ""id"": 99,
+                ""active"": false,
+                ""disabled"": false,
+                ""freeToPlay"": false,
+                ""ownership"": { ""owned"": true, ""freeToPlayReward"": false }
+              }
+            ]";
+
+            var championIds = ChampionAvailabilityParser.ParseSelectableChampionIds(json).ToList();
+
+            AssertEqual(2, championIds.Count, "selectable champion count");
+            AssertTrue(championIds.Contains(22), "owned champion should be selectable");
+            AssertTrue(championIds.Contains(103), "free champion should be selectable");
+            AssertFalse(championIds.Contains(81), "unowned champion should not be selectable");
+            AssertFalse(championIds.Contains(99), "inactive champion should not be selectable");
+        }
+
+
         private static void BuildsBenchSwapRequestWithoutBody()
         {
             var transport = new RecordingTransport();
@@ -101,17 +152,128 @@ namespace AramBenchSwap.Tests
             AssertEqual(null, transport.LastMethod, "transport should not be called");
         }
 
+        private static void KeepsUnselectableBenchChampionVisible()
+        {
+            var transport = new RecordingTransport();
+            transport.QueueResponse(200, @"{
+              ""benchEnabled"": true,
+              ""localPlayerCellId"": 1,
+              ""benchChampions"": [
+                { ""championId"": 22, ""isPriority"": false },
+                { ""championId"": 103, ""isPriority"": false }
+              ]
+            }");
+            transport.QueueResponse(200, @"[
+              {
+                ""id"": 22,
+                ""active"": true,
+                ""disabled"": false,
+                ""freeToPlay"": false,
+                ""ownership"": { ""owned"": true, ""freeToPlayReward"": false }
+              },
+              {
+                ""id"": 103,
+                ""active"": true,
+                ""disabled"": false,
+                ""freeToPlay"": false,
+                ""ownership"": { ""owned"": false, ""freeToPlayReward"": false }
+              }
+            ]");
+            var client = new LcuClient(new LcuConnection("LeagueClient", 1, 1234, "pw", "https"), transport);
+
+            var session = client.GetBenchAwareChampSelectSession();
+
+            AssertEqual(2, session.BenchChampions.Count, "bench champion count should not be filtered");
+            AssertTrue(session.BenchChampions[0].IsSelectable, "owned bench champion should be selectable");
+            AssertFalse(session.BenchChampions[1].IsSelectable, "unowned bench champion should be visible but disabled");
+        }
+
+        private static void RefreshesBenchBeforeSendingSwapRequest()
+        {
+            var transport = new RecordingTransport();
+            transport.QueueResponse(200, @"{
+              ""benchEnabled"": true,
+              ""localPlayerCellId"": 1,
+              ""benchChampions"": [
+                { ""championId"": 22, ""isPriority"": false }
+              ]
+            }");
+            var client = new LcuClient(new LcuConnection("LeagueClient", 1, 1234, "pw", "https"), transport);
+
+            var result = client.RefreshAndSwapBenchChampion(103);
+
+            AssertFalse(result.Success, "stale bench swap should be rejected");
+            AssertTrue(result.Message.Contains("bench"), "failure should mention bench");
+            AssertEqual(0, transport.PostCount, "POST should not be sent");
+            AssertEqual("GET", transport.LastMethod, "last method");
+        }
+
+        private static void RejectsBenchSwapWhenChampionIsNotSelectable()
+        {
+            var transport = new RecordingTransport();
+            transport.QueueResponse(200, @"{
+              ""benchEnabled"": true,
+              ""localPlayerCellId"": 1,
+              ""benchChampions"": [
+                { ""championId"": 22, ""isPriority"": false },
+                { ""championId"": 103, ""isPriority"": false }
+              ]
+            }");
+            transport.QueueResponse(200, @"[
+              {
+                ""id"": 22,
+                ""active"": true,
+                ""disabled"": false,
+                ""freeToPlay"": false,
+                ""ownership"": { ""owned"": true, ""freeToPlayReward"": false }
+              },
+              {
+                ""id"": 103,
+                ""active"": true,
+                ""disabled"": false,
+                ""freeToPlay"": false,
+                ""ownership"": { ""owned"": false, ""freeToPlayReward"": false }
+              }
+            ]");
+            var client = new LcuClient(new LcuConnection("LeagueClient", 1, 1234, "pw", "https"), transport);
+
+            var result = client.RefreshAndSwapBenchChampion(103);
+
+            AssertFalse(result.Success, "unselectable bench champion should be rejected");
+            AssertTrue(result.Message.Contains("bench"), "failure should mention filtered bench");
+            AssertEqual(0, transport.PostCount, "POST should not be sent for unselectable champion");
+        }
+
         private sealed class RecordingTransport : ILcuTransport
         {
             public string LastMethod;
             public string LastUrl;
             public string LastBody;
+            public int CallCount;
+            public int PostCount;
+            private readonly System.Collections.Generic.Queue<LcuResponse> _responses = new System.Collections.Generic.Queue<LcuResponse>();
+
+            public void QueueResponse(int statusCode, string body)
+            {
+                _responses.Enqueue(new LcuResponse(statusCode, body));
+            }
 
             public LcuResponse Send(string method, string url, string password, string body)
             {
+                CallCount++;
+                if (method == "POST")
+                {
+                    PostCount++;
+                }
+
                 LastMethod = method;
                 LastUrl = url;
                 LastBody = body;
+                if (_responses.Count > 0)
+                {
+                    return _responses.Dequeue();
+                }
+
                 return new LcuResponse(200, "{}");
             }
         }
@@ -231,18 +393,47 @@ namespace AramBenchSwap.Tests
             AssertFalse(HttpLcuTransport.IsLocalLcuUrl("https://example.com/lol-champ-select/v1/session"), "external host should not be local LCU");
         }
 
-        private static void HidesOverlayOutsideChampSelectButKeepsStatusText()
+        private static void OverlayModeShowsStatusBeforeChampSelect()
         {
-            var state = BenchWindowState.Decide("Matchmaking", null, true);
+            var state = BenchWindowState.Decide("Matchmaking", null, DisplayMode.Overlay);
 
-            AssertFalse(state.ShouldShow, "overlay should hide before champ select");
-            AssertFalse(state.ShouldRenderBench, "overlay should not render bench before champ select");
+            AssertTrue(state.ShouldShow, "overlay mode should show status before champ select");
+            AssertFalse(state.ShouldRenderBench, "status overlay should not render bench before champ select");
+            AssertTrue(state.Status.Contains("Matchmaking"), "status should explain current phase");
+        }
+
+        private static void BenchOnlyModeHidesStatusBeforeChampSelect()
+        {
+            var state = BenchWindowState.Decide("Matchmaking", null, DisplayMode.BenchOnly);
+
+            AssertFalse(state.ShouldShow, "bench-only mode should hide status before champ select");
+            AssertFalse(state.ShouldRenderBench, "bench-only mode should not render bench before champ select");
             AssertTrue(state.Status.Contains("Matchmaking"), "tray status should explain current phase");
+        }
+
+        private static void OverlayModeShowsChampSelectWaitingStatus()
+        {
+            var session = new ChampSelectSession(true, true, 1, new BenchChampion[0]);
+
+            var state = BenchWindowState.Decide("ChampSelect", session, DisplayMode.Overlay);
+
+            AssertTrue(state.ShouldShow, "overlay mode should show champ select waiting status");
+            AssertFalse(state.ShouldRenderBench, "waiting status should not render bench icons");
+        }
+
+        private static void BenchOnlyModeHidesChampSelectWaitingStatus()
+        {
+            var session = new ChampSelectSession(true, true, 1, new BenchChampion[0]);
+
+            var state = BenchWindowState.Decide("ChampSelect", session, DisplayMode.BenchOnly);
+
+            AssertFalse(state.ShouldShow, "bench-only mode should hide champ select waiting status");
+            AssertFalse(state.ShouldRenderBench, "bench-only mode should not render bench icons");
         }
 
         private static void HidesOverlayDuringInProgressButKeepsStatusText()
         {
-            var state = BenchWindowState.Decide("InProgress", null, true);
+            var state = BenchWindowState.Decide("InProgress", null, DisplayMode.Overlay);
 
             AssertFalse(state.ShouldShow, "overlay should hide during game");
             AssertFalse(state.ShouldRenderBench, "overlay should not render bench during game");
@@ -253,10 +444,20 @@ namespace AramBenchSwap.Tests
         {
             var session = new ChampSelectSession(true, true, 1, new[] { new BenchChampion(31, false) });
 
-            var state = BenchWindowState.Decide("ChampSelect", session, false);
+            var state = BenchWindowState.Decide("ChampSelect", session, DisplayMode.BenchOnly);
 
             AssertTrue(state.ShouldShow, "overlay should show in champ select with bench");
             AssertTrue(state.ShouldRenderBench, "overlay should render bench in champ select");
+        }
+
+        private static void ParsesDisplayModePreference()
+        {
+            AssertEqual(DisplayMode.Overlay, DisplayModePreference.Parse(null), "null display mode default");
+            AssertEqual(DisplayMode.Overlay, DisplayModePreference.Parse(""), "empty display mode default");
+            AssertEqual(DisplayMode.Overlay, DisplayModePreference.Parse("Overlay"), "overlay display mode");
+            AssertEqual(DisplayMode.BenchOnly, DisplayModePreference.Parse("BenchOnly"), "bench-only display mode");
+            AssertEqual(DisplayMode.Overlay, DisplayModePreference.Parse("invalid"), "invalid display mode default");
+            AssertEqual("BenchOnly", DisplayModePreference.Format(DisplayMode.BenchOnly), "bench-only display mode format");
         }
 
         private static void AssertEqual<T>(T expected, T actual, string label)

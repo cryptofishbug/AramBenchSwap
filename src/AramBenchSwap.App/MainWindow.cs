@@ -19,6 +19,7 @@ namespace AramBenchSwap.App
     public sealed class MainWindow : Window, IDisposable
     {
         private const double BaseOverlayWidth = 356;
+        private const double StatusOverlayWidth = 220;
 
         private readonly DispatcherTimer _timer;
         private readonly DispatcherTimer _placementTimer;
@@ -34,12 +35,16 @@ namespace AramBenchSwap.App
         private string _lastBenchKey;
         private bool _refreshing;
         private bool _allowClose;
+        private DisplayMode _displayMode;
+        private Forms.ToolStripMenuItem _overlayModeMenuItem;
+        private Forms.ToolStripMenuItem _benchOnlyModeMenuItem;
         private readonly Style _championButtonStyle;
 
         public MainWindow()
         {
             _transport = new HttpLcuTransport();
             _iconCache = new Dictionary<int, ImageSource>();
+            _displayMode = LoadDisplayMode();
 
             Title = string.Empty;
             Width = WindowPlacement.CalculateOverlayWidth(BaseOverlayWidth);
@@ -133,6 +138,18 @@ namespace AramBenchSwap.App
         private Forms.NotifyIcon CreateTrayIcon()
         {
             var menu = new Forms.ContextMenuStrip();
+            _overlayModeMenuItem = new Forms.ToolStripMenuItem("Overlay mode", null, delegate
+            {
+                SetDisplayMode(DisplayMode.Overlay);
+            });
+            _benchOnlyModeMenuItem = new Forms.ToolStripMenuItem("Bench-only mode", null, delegate
+            {
+                SetDisplayMode(DisplayMode.BenchOnly);
+            });
+
+            menu.Items.Add(_overlayModeMenuItem);
+            menu.Items.Add(_benchOnlyModeMenuItem);
+            menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add("Refresh", null, delegate
             {
                 RefreshState();
@@ -151,6 +168,7 @@ namespace AramBenchSwap.App
                 Visible = true
             };
 
+            UpdateDisplayModeMenu();
             icon.DoubleClick += delegate
             {
                 RefreshState();
@@ -185,18 +203,25 @@ namespace AramBenchSwap.App
                 var gameflowPhase = _client.GetGameflowPhase();
                 if (gameflowPhase != "ChampSelect")
                 {
-                    var phaseState = BenchWindowState.Decide(gameflowPhase, null, true);
+                    var phaseState = BenchWindowState.Decide(gameflowPhase, null, _displayMode);
                     _currentSession = null;
                     _lastBenchKey = null;
                     _benchPanel.Children.Clear();
                     SetTrayStatus(phaseState.Status, System.Drawing.SystemIcons.Application);
-                    Hide();
+                    if (phaseState.ShouldShow)
+                    {
+                        ShowStatusOnly(phaseState.Status);
+                    }
+                    else
+                    {
+                        Hide();
+                    }
 
                     return;
                 }
 
-                _currentSession = _client.GetChampSelectSession();
-                var windowState = BenchWindowState.Decide(gameflowPhase, _currentSession, false);
+                _currentSession = _client.GetBenchAwareChampSelectSession();
+                var windowState = BenchWindowState.Decide(gameflowPhase, _currentSession, _displayMode);
                 if (windowState.ShouldRenderBench)
                 {
                     SetTrayStatus("ARAM bench ready", System.Drawing.SystemIcons.Information);
@@ -209,11 +234,15 @@ namespace AramBenchSwap.App
                 }
                 else if (windowState.ShouldShow)
                 {
+                    _lastBenchKey = null;
+                    _benchPanel.Children.Clear();
                     SetTrayStatus(windowState.Status, System.Drawing.SystemIcons.Application);
-                    Hide();
+                    ShowStatusOnly(windowState.Status);
                 }
                 else
                 {
+                    _lastBenchKey = null;
+                    _benchPanel.Children.Clear();
                     SetTrayStatus(windowState.Status, System.Drawing.SystemIcons.Application);
                     Hide();
                 }
@@ -251,10 +280,84 @@ namespace AramBenchSwap.App
             _trayIcon.Text = text;
         }
 
+        private void ShowStatusOnly(string message)
+        {
+            Width = StatusOverlayWidth;
+            _status.Text = message;
+            _status.Visibility = Visibility.Visible;
+            _benchPanel.Margin = new Thickness(0);
+            ShowNearLeagueClientTop();
+        }
+
+        private void SetDisplayMode(DisplayMode displayMode)
+        {
+            _displayMode = displayMode;
+            SaveDisplayMode(displayMode);
+            UpdateDisplayModeMenu();
+            RefreshState();
+        }
+
+        private void UpdateDisplayModeMenu()
+        {
+            if (_overlayModeMenuItem != null)
+            {
+                _overlayModeMenuItem.Checked = _displayMode == DisplayMode.Overlay;
+            }
+
+            if (_benchOnlyModeMenuItem != null)
+            {
+                _benchOnlyModeMenuItem.Checked = _displayMode == DisplayMode.BenchOnly;
+            }
+        }
+
+        private static DisplayMode LoadDisplayMode()
+        {
+            try
+            {
+                var path = GetSettingsPath();
+                if (!File.Exists(path))
+                {
+                    return DisplayMode.Overlay;
+                }
+
+                return DisplayModePreference.Parse(File.ReadAllText(path));
+            }
+            catch
+            {
+                return DisplayMode.Overlay;
+            }
+        }
+
+        private static void SaveDisplayMode(DisplayMode displayMode)
+        {
+            try
+            {
+                var path = GetSettingsPath();
+                var directory = Path.GetDirectoryName(path);
+                if (!Directory.Exists(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                File.WriteAllText(path, DisplayModePreference.Format(displayMode));
+            }
+            catch
+            {
+            }
+        }
+
+        private static string GetSettingsPath()
+        {
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "AramBenchSwap",
+                "settings.txt");
+        }
+
         private void RenderBench(IEnumerable<BenchChampion> benchChampions)
         {
             var champions = benchChampions.ToList();
-            var key = string.Join(",", champions.Select(champion => champion.ChampionId.ToString()).ToArray());
+            var key = string.Join(",", champions.Select(champion => champion.ChampionId + ":" + champion.IsSelectable).ToArray());
             if (key == _lastBenchKey)
             {
                 return;
@@ -265,12 +368,12 @@ namespace AramBenchSwap.App
 
             foreach (var champion in champions)
             {
-                var button = CreateChampionButton(champion.ChampionId);
+                var button = CreateChampionButton(champion);
                 _benchPanel.Children.Add(button);
             }
         }
 
-        private Button CreateChampionButton(int championId)
+        private Button CreateChampionButton(BenchChampion champion)
         {
             var button = new Button
             {
@@ -278,33 +381,63 @@ namespace AramBenchSwap.App
                 Height = 48,
                 Margin = new Thickness(3),
                 Padding = new Thickness(0),
-                Tag = championId,
-                ToolTip = "Swap champion " + championId,
+                Tag = champion.ChampionId,
+                ToolTip = champion.IsSelectable
+                    ? "Swap champion " + champion.ChampionId
+                    : "Champion is on the bench but not selectable on this account.",
                 Style = _championButtonStyle
             };
 
-            var icon = LoadChampionIcon(championId);
+            var icon = LoadChampionIcon(champion.ChampionId);
             if (icon != null)
             {
-                button.Content = new Image
+                var image = new Image
                 {
-                    Source = icon,
+                    Source = champion.IsSelectable ? icon : CreateDisabledIcon(icon),
                     Stretch = Stretch.UniformToFill
                 };
+                if (!champion.IsSelectable)
+                {
+                    image.Opacity = 0.45;
+                }
+
+                button.Content = image;
             }
             else
             {
                 button.Content = new TextBlock
                 {
-                    Text = championId.ToString(),
+                    Text = champion.ChampionId.ToString(),
                     Foreground = Brushes.White,
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Center
                 };
             }
 
-            button.Click += OnChampionClicked;
+            button.IsEnabled = champion.IsSelectable;
+            if (champion.IsSelectable)
+            {
+                button.Click += OnChampionClicked;
+            }
+
             return button;
+        }
+
+        private static ImageSource CreateDisabledIcon(ImageSource icon)
+        {
+            var bitmapSource = icon as BitmapSource;
+            if (bitmapSource == null)
+            {
+                return icon;
+            }
+
+            var grayscale = new FormatConvertedBitmap();
+            grayscale.BeginInit();
+            grayscale.Source = bitmapSource;
+            grayscale.DestinationFormat = PixelFormats.Gray8;
+            grayscale.EndInit();
+            grayscale.Freeze();
+            return grayscale;
         }
 
         private ImageSource LoadChampionIcon(int championId)
@@ -356,7 +489,7 @@ namespace AramBenchSwap.App
                     return;
                 }
 
-                var result = _client.SwapBenchChampion(_currentSession, championId);
+                var result = _client.RefreshAndSwapBenchChampion(championId);
                 _status.Text = result.Message;
                 _lastBenchKey = null;
                 RefreshState();
