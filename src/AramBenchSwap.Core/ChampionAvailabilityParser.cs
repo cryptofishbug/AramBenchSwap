@@ -32,6 +32,18 @@ namespace AramBenchSwap.Core
 
             foreach (var item in champions)
             {
+                if (item is int)
+                {
+                    yield return (int)item;
+                    continue;
+                }
+
+                if (item is long)
+                {
+                    yield return (int)(long)item;
+                    continue;
+                }
+
                 var champion = item as IDictionary<string, object>;
                 if (champion == null)
                 {

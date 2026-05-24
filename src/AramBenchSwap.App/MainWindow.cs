@@ -23,8 +23,10 @@ namespace AramBenchSwap.App
 
         private readonly DispatcherTimer _timer;
         private readonly DispatcherTimer _placementTimer;
+        private readonly DispatcherTimer _cooldownTimer;
         private readonly HttpLcuTransport _transport;
         private readonly Dictionary<int, ImageSource> _iconCache;
+        private readonly BenchSwapCooldown _benchSwapCooldown;
         private readonly WrapPanel _benchPanel;
         private readonly TextBlock _status;
         private readonly Forms.NotifyIcon _trayIcon;
@@ -44,6 +46,7 @@ namespace AramBenchSwap.App
         {
             _transport = new HttpLcuTransport();
             _iconCache = new Dictionary<int, ImageSource>();
+            _benchSwapCooldown = new BenchSwapCooldown(TimeSpan.FromSeconds(3));
             _displayMode = LoadDisplayMode();
 
             Title = string.Empty;
@@ -111,12 +114,21 @@ namespace AramBenchSwap.App
                 }
             };
             _placementTimer.Start();
+
+            _cooldownTimer = new DispatcherTimer();
+            _cooldownTimer.Tick += delegate
+            {
+                _cooldownTimer.Stop();
+                _lastBenchKey = null;
+                RefreshState();
+            };
         }
 
         public void Dispose()
         {
             _timer.Stop();
             _placementTimer.Stop();
+            _cooldownTimer.Stop();
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
         }
@@ -204,6 +216,8 @@ namespace AramBenchSwap.App
                 if (gameflowPhase != "ChampSelect")
                 {
                     var phaseState = BenchWindowState.Decide(gameflowPhase, null, _displayMode);
+                    _benchSwapCooldown.Update(gameflowPhase, null, DateTime.UtcNow);
+                    _cooldownTimer.Stop();
                     _currentSession = null;
                     _lastBenchKey = null;
                     _benchPanel.Children.Clear();
@@ -221,12 +235,16 @@ namespace AramBenchSwap.App
                 }
 
                 _currentSession = _client.GetBenchAwareChampSelectSession();
+                var now = DateTime.UtcNow;
+                _benchSwapCooldown.Update(gameflowPhase, _currentSession, now);
                 var windowState = BenchWindowState.Decide(gameflowPhase, _currentSession, _displayMode);
                 if (windowState.ShouldRenderBench)
                 {
                     SetTrayStatus("ARAM bench ready", System.Drawing.SystemIcons.Information);
                     Width = WindowPlacement.CalculateOverlayWidth(BaseOverlayWidth);
-                    RenderBench(_currentSession.BenchChampions);
+                    var swapCooldownActive = _benchSwapCooldown.IsActive(now);
+                    RenderBench(_currentSession.BenchChampions, swapCooldownActive);
+                    ScheduleCooldownRefresh(now);
                     _status.Text = windowState.Status;
                     _status.Visibility = Visibility.Collapsed;
                     _benchPanel.Margin = new Thickness(0);
@@ -241,6 +259,7 @@ namespace AramBenchSwap.App
                 }
                 else
                 {
+                    _cooldownTimer.Stop();
                     _lastBenchKey = null;
                     _benchPanel.Children.Clear();
                     SetTrayStatus(windowState.Status, System.Drawing.SystemIcons.Application);
@@ -261,6 +280,7 @@ namespace AramBenchSwap.App
 
         private void SetWaiting(string message)
         {
+            _cooldownTimer.Stop();
             _currentSession = null;
             _lastBenchKey = null;
             _benchPanel.Children.Clear();
@@ -282,11 +302,26 @@ namespace AramBenchSwap.App
 
         private void ShowStatusOnly(string message)
         {
+            _cooldownTimer.Stop();
             Width = StatusOverlayWidth;
             _status.Text = message;
             _status.Visibility = Visibility.Visible;
             _benchPanel.Margin = new Thickness(0);
             ShowNearLeagueClientTop();
+        }
+
+        private void ScheduleCooldownRefresh(DateTime nowUtc)
+        {
+            var delay = CooldownRefreshDelay.Calculate(_benchSwapCooldown.Remaining(nowUtc));
+            if (delay <= TimeSpan.Zero)
+            {
+                _cooldownTimer.Stop();
+                return;
+            }
+
+            _cooldownTimer.Stop();
+            _cooldownTimer.Interval = delay;
+            _cooldownTimer.Start();
         }
 
         private void SetDisplayMode(DisplayMode displayMode)
@@ -354,10 +389,10 @@ namespace AramBenchSwap.App
                 "settings.txt");
         }
 
-        private void RenderBench(IEnumerable<BenchChampion> benchChampions)
+        private void RenderBench(IEnumerable<BenchChampion> benchChampions, bool swapCooldownActive)
         {
             var champions = benchChampions.ToList();
-            var key = string.Join(",", champions.Select(champion => champion.ChampionId + ":" + champion.IsSelectable).ToArray());
+            var key = swapCooldownActive + "|" + string.Join(",", champions.Select(champion => champion.ChampionId + ":" + champion.IsSelectable).ToArray());
             if (key == _lastBenchKey)
             {
                 return;
@@ -368,12 +403,12 @@ namespace AramBenchSwap.App
 
             foreach (var champion in champions)
             {
-                var button = CreateChampionButton(champion);
+                var button = CreateChampionButton(champion, swapCooldownActive);
                 _benchPanel.Children.Add(button);
             }
         }
 
-        private Button CreateChampionButton(BenchChampion champion)
+        private Button CreateChampionButton(BenchChampion champion, bool swapCooldownActive)
         {
             var button = new Button
             {
@@ -382,9 +417,7 @@ namespace AramBenchSwap.App
                 Margin = new Thickness(3),
                 Padding = new Thickness(0),
                 Tag = champion.ChampionId,
-                ToolTip = champion.IsSelectable
-                    ? "Swap champion " + champion.ChampionId
-                    : "Champion is on the bench but not selectable on this account.",
+                ToolTip = GetChampionButtonTooltip(champion, swapCooldownActive),
                 Style = _championButtonStyle
             };
 
@@ -400,6 +433,10 @@ namespace AramBenchSwap.App
                 {
                     image.Opacity = 0.45;
                 }
+                else if (swapCooldownActive)
+                {
+                    image.Opacity = 0.72;
+                }
 
                 button.Content = image;
             }
@@ -414,13 +451,28 @@ namespace AramBenchSwap.App
                 };
             }
 
-            button.IsEnabled = champion.IsSelectable;
-            if (champion.IsSelectable)
+            button.IsEnabled = champion.IsSelectable && !swapCooldownActive;
+            if (button.IsEnabled)
             {
                 button.Click += OnChampionClicked;
             }
 
             return button;
+        }
+
+        private static string GetChampionButtonTooltip(BenchChampion champion, bool swapCooldownActive)
+        {
+            if (!champion.IsSelectable)
+            {
+                return "Champion is on the bench but not selectable on this account.";
+            }
+
+            if (swapCooldownActive)
+            {
+                return "Bench swaps are available after the client cooldown.";
+            }
+
+            return "Swap champion " + champion.ChampionId;
         }
 
         private static ImageSource CreateDisabledIcon(ImageSource icon)
@@ -486,6 +538,12 @@ namespace AramBenchSwap.App
                 if (_client == null || _currentSession == null)
                 {
                     _status.Text = "No active bench session.";
+                    return;
+                }
+
+                if (_benchSwapCooldown.IsActive(DateTime.UtcNow))
+                {
+                    _status.Text = "Bench swaps are available after the client cooldown.";
                     return;
                 }
 
@@ -603,7 +661,7 @@ namespace AramBenchSwap.App
             template.Triggers.Add(pressedTrigger);
 
             var disabledTrigger = new Trigger { Property = Button.IsEnabledProperty, Value = false };
-            disabledTrigger.Setters.Add(new Setter(UIElement.OpacityProperty, 0.45));
+            disabledTrigger.Setters.Add(new Setter(UIElement.OpacityProperty, 1.0));
             template.Triggers.Add(disabledTrigger);
 
             var style = new Style(typeof(Button));

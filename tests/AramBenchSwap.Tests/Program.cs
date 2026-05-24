@@ -12,7 +12,11 @@ namespace AramBenchSwap.Tests
             {
                 ParsesLockfile();
                 ParsesBenchChampionsFromSession();
-                ParsesSelectableChampionIds();
+                ParsesPickableChampionIds();
+                StartsBenchSwapCooldownWhenBenchFirstAppears();
+                StartsBenchSwapCooldownWhenChampSelectBeginsBeforeBenchAppears();
+                KeepsBenchSwapCooldownUntilThreeSecondsPass();
+                UsesRemainingCooldownAsRefreshDelay();
                 BuildsBenchSwapRequestWithoutBody();
                 RejectsBenchSwapWhenChampionIsNotOnBench();
                 RefreshesBenchBeforeSendingSwapRequest();
@@ -82,46 +86,67 @@ namespace AramBenchSwap.Tests
             AssertTrue(session.BenchChampions[1].IsPriority, "second priority");
         }
 
-        private static void ParsesSelectableChampionIds()
+        private static void ParsesPickableChampionIds()
         {
-            const string json = @"[
-              {
-                ""id"": 22,
-                ""active"": true,
-                ""disabled"": false,
-                ""freeToPlay"": false,
-                ""ownership"": { ""owned"": true, ""freeToPlayReward"": false }
-              },
-              {
-                ""id"": 103,
-                ""active"": true,
-                ""disabled"": false,
-                ""freeToPlay"": true,
-                ""ownership"": { ""owned"": false, ""freeToPlayReward"": false }
-              },
-              {
-                ""id"": 81,
-                ""active"": true,
-                ""disabled"": false,
-                ""freeToPlay"": false,
-                ""ownership"": { ""owned"": false, ""freeToPlayReward"": false }
-              },
-              {
-                ""id"": 99,
-                ""active"": false,
-                ""disabled"": false,
-                ""freeToPlay"": false,
-                ""ownership"": { ""owned"": true, ""freeToPlayReward"": false }
-              }
-            ]";
+            const string json = "[22, 103]";
 
             var championIds = ChampionAvailabilityParser.ParseSelectableChampionIds(json).ToList();
 
             AssertEqual(2, championIds.Count, "selectable champion count");
-            AssertTrue(championIds.Contains(22), "owned champion should be selectable");
-            AssertTrue(championIds.Contains(103), "free champion should be selectable");
-            AssertFalse(championIds.Contains(81), "unowned champion should not be selectable");
-            AssertFalse(championIds.Contains(99), "inactive champion should not be selectable");
+            AssertTrue(championIds.Contains(22), "pickable champion 22");
+            AssertTrue(championIds.Contains(103), "pickable champion 103");
+        }
+
+        private static void StartsBenchSwapCooldownWhenBenchFirstAppears()
+        {
+            var cooldown = new BenchSwapCooldown(TimeSpan.FromSeconds(3));
+            var session = new ChampSelectSession(true, true, 1, new[] { new BenchChampion(22, false) });
+            var now = new DateTime(2026, 5, 24, 0, 0, 0, DateTimeKind.Utc);
+
+            cooldown.Update("ChampSelect", session, now);
+
+            AssertTrue(cooldown.IsActive(now), "bench swap cooldown should start when bench appears");
+            AssertEqual(TimeSpan.FromSeconds(3), cooldown.Remaining(now), "bench swap cooldown remaining time");
+            AssertFalse(cooldown.IsActive(now.AddSeconds(3)), "bench swap cooldown should end after three seconds");
+            AssertEqual(TimeSpan.Zero, cooldown.Remaining(now.AddSeconds(3)), "expired bench swap cooldown remaining time");
+        }
+
+        private static void StartsBenchSwapCooldownWhenChampSelectBeginsBeforeBenchAppears()
+        {
+            var cooldown = new BenchSwapCooldown(TimeSpan.FromSeconds(3));
+            var emptySession = new ChampSelectSession(true, true, 1, new BenchChampion[0]);
+            var benchSession = new ChampSelectSession(true, true, 1, new[] { new BenchChampion(22, false) });
+            var now = new DateTime(2026, 5, 24, 0, 0, 0, DateTimeKind.Utc);
+
+            cooldown.Update("ChampSelect", emptySession, now);
+            cooldown.Update("ChampSelect", benchSession, now.AddSeconds(2));
+
+            AssertEqual(TimeSpan.FromSeconds(1), cooldown.Remaining(now.AddSeconds(2)), "cooldown should be anchored to champ select start");
+        }
+
+        private static void KeepsBenchSwapCooldownUntilThreeSecondsPass()
+        {
+            var cooldown = new BenchSwapCooldown(TimeSpan.FromSeconds(3));
+            var session = new ChampSelectSession(true, true, 1, new[] { new BenchChampion(22, false) });
+            var now = new DateTime(2026, 5, 24, 0, 0, 0, DateTimeKind.Utc);
+
+            cooldown.Update("ChampSelect", session, now);
+            cooldown.Update("ChampSelect", session, now.AddSeconds(1));
+
+            AssertTrue(cooldown.IsActive(now.AddSeconds(2)), "bench swap cooldown should remain active before three seconds");
+            AssertFalse(cooldown.IsActive(now.AddSeconds(3.1)), "bench swap cooldown should expire after three seconds");
+
+            cooldown.Update("InProgress", null, now.AddSeconds(4));
+            cooldown.Update("ChampSelect", session, now.AddSeconds(5));
+
+            AssertTrue(cooldown.IsActive(now.AddSeconds(5)), "bench swap cooldown should restart for a later champ select");
+        }
+
+        private static void UsesRemainingCooldownAsRefreshDelay()
+        {
+            AssertEqual(TimeSpan.FromMilliseconds(250), CooldownRefreshDelay.Calculate(TimeSpan.FromMilliseconds(250)), "cooldown refresh delay");
+            AssertEqual(TimeSpan.FromMilliseconds(1), CooldownRefreshDelay.Calculate(TimeSpan.FromTicks(1)), "minimum cooldown refresh delay");
+            AssertEqual(TimeSpan.Zero, CooldownRefreshDelay.Calculate(TimeSpan.Zero), "expired cooldown refresh delay");
         }
 
 
@@ -163,22 +188,7 @@ namespace AramBenchSwap.Tests
                 { ""championId"": 103, ""isPriority"": false }
               ]
             }");
-            transport.QueueResponse(200, @"[
-              {
-                ""id"": 22,
-                ""active"": true,
-                ""disabled"": false,
-                ""freeToPlay"": false,
-                ""ownership"": { ""owned"": true, ""freeToPlayReward"": false }
-              },
-              {
-                ""id"": 103,
-                ""active"": true,
-                ""disabled"": false,
-                ""freeToPlay"": false,
-                ""ownership"": { ""owned"": false, ""freeToPlayReward"": false }
-              }
-            ]");
+            transport.QueueResponse(200, "[22]");
             var client = new LcuClient(new LcuConnection("LeagueClient", 1, 1234, "pw", "https"), transport);
 
             var session = client.GetBenchAwareChampSelectSession();
@@ -186,6 +196,7 @@ namespace AramBenchSwap.Tests
             AssertEqual(2, session.BenchChampions.Count, "bench champion count should not be filtered");
             AssertTrue(session.BenchChampions[0].IsSelectable, "owned bench champion should be selectable");
             AssertFalse(session.BenchChampions[1].IsSelectable, "unowned bench champion should be visible but disabled");
+            AssertEqual("https://127.0.0.1:1234/lol-champ-select/v1/pickable-champion-ids", transport.LastUrl, "pickable champion endpoint");
         }
 
         private static void RefreshesBenchBeforeSendingSwapRequest()
@@ -219,22 +230,7 @@ namespace AramBenchSwap.Tests
                 { ""championId"": 103, ""isPriority"": false }
               ]
             }");
-            transport.QueueResponse(200, @"[
-              {
-                ""id"": 22,
-                ""active"": true,
-                ""disabled"": false,
-                ""freeToPlay"": false,
-                ""ownership"": { ""owned"": true, ""freeToPlayReward"": false }
-              },
-              {
-                ""id"": 103,
-                ""active"": true,
-                ""disabled"": false,
-                ""freeToPlay"": false,
-                ""ownership"": { ""owned"": false, ""freeToPlayReward"": false }
-              }
-            ]");
+            transport.QueueResponse(200, "[22]");
             var client = new LcuClient(new LcuConnection("LeagueClient", 1, 1234, "pw", "https"), transport);
 
             var result = client.RefreshAndSwapBenchChampion(103);

@@ -45,6 +45,8 @@ AramBenchSwap.Core.dll
 
 흑백/반투명 아이콘은 벤치에는 있지만 현재 계정에서 선택할 수 없는 챔피언입니다. 이 아이콘은 클릭할 수 없으며, 앱은 스왑 요청을 보내지 않습니다.
 
+픽창에서 벤치가 처음 활성화되면 3초 동안 모든 벤치 버튼이 비활성화됩니다. 이는 League Client의 ARAM 벤치 스왑 쿨다운과 맞추기 위한 동작이며, 이 시간 동안 앱은 스왑 요청을 보내지 않습니다.
+
 앱은 Windows 트레이에도 상주합니다. 트레이 메뉴에서 표시 모드, 새로고침, 종료를 선택할 수 있습니다.
 
 ## 표시 모드
@@ -85,7 +87,7 @@ Release 빌드 결과:
 - League Client 창이 화면 맨 위에 있으면 overlay가 화면 밖으로 나가지 않도록 화면 상단에 붙습니다.
 - 첫 버전은 LCU 요청을 동기 방식으로 처리하므로, 로컬 클라이언트 응답이 느리면 overlay가 잠깐 멈출 수 있습니다.
 - 픽창에서는 챔피언 이름을 표시하지 않습니다. 빠른 식별과 낮은 시각적 방해를 위해 아이콘만 보여줍니다.
-- 선택 가능 여부는 로컬 LCU의 챔피언 보유/무료 로테이션 정보에 의존합니다. 해당 정보를 읽을 수 없으면 정상 스왑을 막지 않기 위해 벤치 아이콘을 기존처럼 표시합니다.
+- 선택 가능 여부는 로컬 LCU의 픽창 선택 가능 챔피언 목록에 의존합니다. 해당 정보를 읽을 수 없으면 정상 스왑을 막지 않기 위해 벤치 아이콘을 기존처럼 표시합니다.
 
 ## 라이선스
 
@@ -138,6 +140,8 @@ AramBenchSwap.Core.dll
 
 Grayscale translucent icons are champions that are on the bench but not selectable on your account. They cannot be clicked, and the app will not send a swap request for them.
 
+When the bench first becomes available in champ select, all bench buttons stay disabled for 3 seconds. This mirrors the League Client ARAM bench swap cooldown, and the app will not send swap requests during that window.
+
 The app also stays in the Windows tray. Use the tray menu to change display mode, refresh, or exit the app.
 
 ## Display Modes
@@ -178,7 +182,7 @@ The app tries these sources:
 - If the League Client is at the very top of the screen, the overlay clamps to the screen top instead of going off-screen.
 - LCU requests are synchronous in this first version, so a slow local client response can briefly pause the overlay.
 - Champion names are not shown in champ select; the overlay is intentionally icon-only for speed and low visual noise.
-- Selectability depends on local LCU champion ownership/free-rotation data. If that data cannot be read, the app keeps showing bench icons normally to avoid blocking valid swaps.
+- Selectability depends on the local LCU champ-select selectable champion list. If that data cannot be read, the app keeps showing bench icons normally to avoid blocking valid swaps.
 
 ## License
 

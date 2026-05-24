@@ -32,7 +32,7 @@ namespace AramBenchSwap.Core
                 return session;
             }
 
-            var selectableChampionIds = GetSelectableChampionIds();
+            var selectableChampionIds = GetChampionIds("/lol-champ-select/v1/pickable-champion-ids");
             if (selectableChampionIds == null)
             {
                 return session;
@@ -86,9 +86,9 @@ namespace AramBenchSwap.Core
             return SwapResult.Failure("Bench swap failed with HTTP " + response.StatusCode + ".");
         }
 
-        private int[] GetSelectableChampionIds()
+        private int[] GetChampionIds(string path)
         {
-            var response = _transport.Send("GET", _connection.BaseUrl + "/lol-champions/v1/owned-champions-minimal", _connection.Password, null);
+            var response = _transport.Send("GET", _connection.BaseUrl + path, _connection.Password, null);
             if (response.StatusCode != 200)
             {
                 return null;
