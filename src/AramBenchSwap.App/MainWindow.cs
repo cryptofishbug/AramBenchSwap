@@ -184,8 +184,18 @@ namespace AramBenchSwap.App
                     _iconCache.Clear();
                 }
 
+                var gameflowPhase = _client.GetGameflowPhase();
+                if (gameflowPhase != "ChampSelect")
+                {
+                    _currentSession = null;
+                    _lastBenchKey = null;
+                    _benchPanel.Children.Clear();
+                    Hide();
+                    return;
+                }
+
                 _currentSession = _client.GetChampSelectSession();
-                var windowState = BenchWindowState.Decide(_currentSession, _manualOpen);
+                var windowState = BenchWindowState.Decide(gameflowPhase, _currentSession, false);
                 if (windowState.ShouldRenderBench)
                 {
                     RenderBench(_currentSession.BenchChampions);

@@ -15,6 +15,16 @@ namespace AramBenchSwap.Core
 
         public static BenchWindowState Decide(ChampSelectSession session, bool manuallyOpened)
         {
+            return Decide("ChampSelect", session, manuallyOpened);
+        }
+
+        public static BenchWindowState Decide(string gameflowPhase, ChampSelectSession session, bool manuallyOpened)
+        {
+            if (gameflowPhase != "ChampSelect")
+            {
+                return new BenchWindowState(false, false, FriendlyStatus(gameflowPhase));
+            }
+
             if (session != null && session.IsAvailable && session.BenchEnabled && session.BenchChampions.Count > 0)
             {
                 return new BenchWindowState(true, true, "Click a bench champion icon to swap.");
@@ -26,6 +36,27 @@ namespace AramBenchSwap.Core
             }
 
             return new BenchWindowState(false, false, "Waiting for ARAM bench...");
+        }
+
+        private static string FriendlyStatus(string gameflowPhase)
+        {
+            switch (gameflowPhase)
+            {
+                case "Lobby":
+                    return "Lobby";
+                case "Matchmaking":
+                    return "Matchmaking";
+                case "ReadyCheck":
+                    return "Ready check";
+                case "InProgress":
+                    return "Game in progress";
+                case "WaitingForStats":
+                case "PreEndOfGame":
+                case "EndOfGame":
+                    return "Game ended";
+                default:
+                    return "Waiting for League Client...";
+            }
         }
     }
 }

@@ -23,6 +23,8 @@ namespace AramBenchSwap.Tests
                 DoublesDefaultPanelWidthForBenchIcons();
                 ClampsPanelAboveClientToWorkAreaTop();
                 AllowsCertificateBypassOnlyForLocalLcuUrls();
+                HidesOverlayOutsideChampSelect();
+                ShowsOverlayOnlyForChampSelectBench();
                 Console.WriteLine("All tests passed.");
                 return 0;
             }
@@ -226,6 +228,24 @@ namespace AramBenchSwap.Tests
             AssertTrue(HttpLcuTransport.IsLocalLcuUrl("https://127.0.0.1:1234/lol-champ-select/v1/session"), "127.0.0.1 should be local LCU");
             AssertTrue(HttpLcuTransport.IsLocalLcuUrl("https://localhost:1234/lol-champ-select/v1/session"), "localhost should be local LCU");
             AssertFalse(HttpLcuTransport.IsLocalLcuUrl("https://example.com/lol-champ-select/v1/session"), "external host should not be local LCU");
+        }
+
+        private static void HidesOverlayOutsideChampSelect()
+        {
+            var state = BenchWindowState.Decide("InProgress", null, true);
+
+            AssertFalse(state.ShouldShow, "overlay should hide during game");
+            AssertFalse(state.ShouldRenderBench, "overlay should not render bench during game");
+        }
+
+        private static void ShowsOverlayOnlyForChampSelectBench()
+        {
+            var session = new ChampSelectSession(true, true, 1, new[] { new BenchChampion(31, false) });
+
+            var state = BenchWindowState.Decide("ChampSelect", session, false);
+
+            AssertTrue(state.ShouldShow, "overlay should show in champ select with bench");
+            AssertTrue(state.ShouldRenderBench, "overlay should render bench in champ select");
         }
 
         private static void AssertEqual<T>(T expected, T actual, string label)

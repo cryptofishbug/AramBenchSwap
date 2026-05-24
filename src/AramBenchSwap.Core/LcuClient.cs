@@ -24,6 +24,17 @@ namespace AramBenchSwap.Core
             return ChampSelectSessionParser.Parse(response.Body);
         }
 
+        public string GetGameflowPhase()
+        {
+            var response = _transport.Send("GET", _connection.BaseUrl + "/lol-gameflow/v1/gameflow-phase", _connection.Password, null);
+            if (response.StatusCode != 200)
+            {
+                return "None";
+            }
+
+            return (response.Body ?? string.Empty).Trim().Trim('"');
+        }
+
         public SwapResult SwapBenchChampion(ChampSelectSession session, int championId)
         {
             if (session == null || !session.IsAvailable || !session.BenchEnabled)
