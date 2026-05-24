@@ -48,8 +48,12 @@ namespace AramBenchSwap.Core
                     return "Matchmaking";
                 case "ReadyCheck":
                     return "Ready check";
+                case "GameStart":
+                    return "Game starting";
                 case "InProgress":
                     return "Game in progress";
+                case "Reconnect":
+                    return "Reconnect available";
                 case "WaitingForStats":
                 case "PreEndOfGame":
                 case "EndOfGame":

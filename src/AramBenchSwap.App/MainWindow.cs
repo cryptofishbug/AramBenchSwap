@@ -18,6 +18,8 @@ namespace AramBenchSwap.App
 {
     public sealed class MainWindow : Window, IDisposable
     {
+        private const double BaseOverlayWidth = 356;
+
         private readonly DispatcherTimer _timer;
         private readonly DispatcherTimer _placementTimer;
         private readonly HttpLcuTransport _transport;
@@ -31,7 +33,6 @@ namespace AramBenchSwap.App
         private ChampSelectSession _currentSession;
         private string _lastBenchKey;
         private bool _refreshing;
-        private bool _manualOpen = true;
         private bool _allowClose;
         private readonly Style _championButtonStyle;
 
@@ -41,7 +42,7 @@ namespace AramBenchSwap.App
             _iconCache = new Dictionary<int, ImageSource>();
 
             Title = string.Empty;
-            Width = WindowPlacement.CalculateOverlayWidth(356);
+            Width = WindowPlacement.CalculateOverlayWidth(BaseOverlayWidth);
             SizeToContent = SizeToContent.Height;
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
@@ -124,7 +125,6 @@ namespace AramBenchSwap.App
             }
             else
             {
-                _manualOpen = false;
                 Hide();
             }
             base.OnClosing(e);
@@ -133,10 +133,9 @@ namespace AramBenchSwap.App
         private Forms.NotifyIcon CreateTrayIcon()
         {
             var menu = new Forms.ContextMenuStrip();
-            menu.Items.Add("Show", null, delegate
+            menu.Items.Add("Refresh", null, delegate
             {
-                _manualOpen = true;
-                ShowNearLeagueClientTop();
+                RefreshState();
             });
             menu.Items.Add("Exit", null, delegate
             {
@@ -154,8 +153,7 @@ namespace AramBenchSwap.App
 
             icon.DoubleClick += delegate
             {
-                _manualOpen = true;
-                ShowNearLeagueClientTop();
+                RefreshState();
             };
             return icon;
         }
@@ -187,10 +185,13 @@ namespace AramBenchSwap.App
                 var gameflowPhase = _client.GetGameflowPhase();
                 if (gameflowPhase != "ChampSelect")
                 {
+                    var phaseState = BenchWindowState.Decide(gameflowPhase, null, true);
                     _currentSession = null;
                     _lastBenchKey = null;
                     _benchPanel.Children.Clear();
+                    SetTrayStatus(phaseState.Status, System.Drawing.SystemIcons.Application);
                     Hide();
+
                     return;
                 }
 
@@ -198,6 +199,8 @@ namespace AramBenchSwap.App
                 var windowState = BenchWindowState.Decide(gameflowPhase, _currentSession, false);
                 if (windowState.ShouldRenderBench)
                 {
+                    SetTrayStatus("ARAM bench ready", System.Drawing.SystemIcons.Information);
+                    Width = WindowPlacement.CalculateOverlayWidth(BaseOverlayWidth);
                     RenderBench(_currentSession.BenchChampions);
                     _status.Text = windowState.Status;
                     _status.Visibility = Visibility.Collapsed;
@@ -206,22 +209,19 @@ namespace AramBenchSwap.App
                 }
                 else if (windowState.ShouldShow)
                 {
-                    _benchPanel.Children.Clear();
-                    _lastBenchKey = null;
-                    _status.Text = windowState.Status;
-                    _status.Visibility = Visibility.Visible;
-                    _benchPanel.Margin = new Thickness(0, 0, 0, 5);
-                    ShowNearLeagueClientTop();
+                    SetTrayStatus(windowState.Status, System.Drawing.SystemIcons.Application);
+                    Hide();
                 }
                 else
                 {
-                    SetWaiting("Waiting for ARAM bench...");
+                    SetTrayStatus(windowState.Status, System.Drawing.SystemIcons.Application);
+                    Hide();
                 }
             }
             catch (Exception ex)
             {
                 _status.Text = "LCU error: " + ex.Message;
-                _trayIcon.Text = "ARAM Bench Swap: LCU error";
+                SetTrayStatus("LCU error", System.Drawing.SystemIcons.Warning);
                 Hide();
             }
             finally
@@ -235,18 +235,20 @@ namespace AramBenchSwap.App
             _currentSession = null;
             _lastBenchKey = null;
             _benchPanel.Children.Clear();
-            _status.Text = message;
-            _status.Visibility = Visibility.Visible;
-            _benchPanel.Margin = new Thickness(0, 0, 0, 5);
-            _trayIcon.Text = "ARAM Bench Swap";
-            if (!_manualOpen)
+            SetTrayStatus(message, System.Drawing.SystemIcons.Application);
+            Hide();
+        }
+
+        private void SetTrayStatus(string status, System.Drawing.Icon icon)
+        {
+            var text = "ARAM Bench Swap: " + status;
+            if (text.Length > 63)
             {
-                Hide();
+                text = text.Substring(0, 60) + "...";
             }
-            else
-            {
-                ShowNearLeagueClientTop();
-            }
+
+            _trayIcon.Icon = icon;
+            _trayIcon.Text = text;
         }
 
         private void RenderBench(IEnumerable<BenchChampion> benchChampions)
